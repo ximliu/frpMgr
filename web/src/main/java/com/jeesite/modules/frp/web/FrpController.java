@@ -11,6 +11,7 @@ import com.jeesite.modules.common.utils.ZipUtils;
 import com.jeesite.modules.frp.entity.FrpServer;
 import com.jeesite.modules.frp.service.FrpServerService;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
@@ -38,6 +39,7 @@ import org.springframework.web.bind.annotation.*;
 import java.io.*;
 import java.util.List;
 import java.util.UUID;
+import java.util.logging.Logger;
 
 /**
  * frpController
@@ -52,6 +54,7 @@ public class FrpController extends BaseController {
 	private FrpService frpService;
 	@Autowired
 	private FrpServerService frpServerService;
+	protected org.slf4j.Logger log = LoggerFactory.getLogger(getClass());
 
 	/**
 	 * 获取数据
@@ -78,7 +81,7 @@ public class FrpController extends BaseController {
 	@RequestMapping(value = "listData")
 	@ResponseBody
 	public Page<Frp> listData(Frp frp, HttpServletRequest request, HttpServletResponse response) {
-		Page<Frp> page = frpService.findPage(new Page<Frp>(request, response), frp); 
+		Page<Frp> page = frpService.findPage(new Page<Frp>(request, response), frp);
 		return page;
 	}
 
@@ -115,7 +118,6 @@ public class FrpController extends BaseController {
 	@PostMapping(value = "save")
 	@ResponseBody
 	public String save(@Validated Frp frp) {
-
 		//判断是否存在项目名称一样的或存在二级域名一样的;
 		Frp isExist = frpService.isExist(frp.getProjectName(), frp.getFrpDomainSecond(), String.valueOf(frp.getServerId()));
 		if (isExist == null) {
@@ -159,10 +161,10 @@ public class FrpController extends BaseController {
 		String dir = System.getProperty("java.io.tmpdir") + File.separator + zipName + File.separator;
 		String dir_client = System.getProperty("java.io.tmpdir") + File.separator + zipName + File.separator + "client";
 		File srcDir = new File(dir_client);
-		System.out.println("临时文件夹准备");
+		log.info("临时文件夹准备");
 		//拷贝到临时文件夹
 		JarFileUtil.BatCopyFileFromJar("static/frp/frp-client", dir_client);
-		System.out.println("拷贝到临时文件夹");
+		log.info("拷贝到临时文件夹");
         //读取frpc.ini
         File temp_file = new File(dir_client + File.separator +"frpc.ini");
         StringBuffer res = new StringBuffer();
@@ -172,7 +174,7 @@ public class FrpController extends BaseController {
 		    res.append(line + "\n");
 		}
         reader.close();
-        System.out.println("读取文件");
+        log.info("读取文件");
         BufferedWriter writer = new BufferedWriter(new FileWriter(temp_file));
         String temp_string = res.toString();
         //替换模板
@@ -186,7 +188,7 @@ public class FrpController extends BaseController {
         writer.write(temp_string);
 		writer.flush();
 		writer.close();
-        System.out.println("替换模板");
+        log.info("替换模板");
 
         String zipFilePath = System.getProperty("java.io.tmpdir") + File.separator + zipName + "zip";
         ZipUtils.zip(dir, zipFilePath);
@@ -207,7 +209,7 @@ public class FrpController extends BaseController {
            toClient.close();
            FileUtils.deleteDirectory(srcDir);
            zipFile.delete();
-        System.out.println("succeed");
+        log.info("succeed");
     }
 
     @RequestMapping("/exportMac/{id}")
@@ -250,7 +252,7 @@ public class FrpController extends BaseController {
         String zipFilePath = System.getProperty("java.io.tmpdir") + File.separator + zipName + "zip";
         ZipUtils.zip(dir, zipFilePath);
         File zipFile = new File(zipFilePath);
-	        System.out.println("succeed");
+	        log.info("succeed");
            // 以流的形式下载文件。
            BufferedInputStream fis = new BufferedInputStream(new FileInputStream(zipFile.getPath()));
            byte[] buffer = new byte[fis.available()];

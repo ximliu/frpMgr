@@ -6,12 +6,22 @@ package com.jeesite.modules.frp.web;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+import com.fasterxml.jackson.core.JsonParser;
 import com.jeesite.modules.common.utils.JarFileUtil;
+import com.jeesite.modules.common.utils.ShellUtil;
+import com.jeesite.modules.common.utils.WebHttpUtils;
 import com.jeesite.modules.common.utils.ZipUtils;
 import com.jeesite.modules.frp.entity.Frp;
+import com.jeesite.modules.frp.entity.FrpConnect;
+import com.jeesite.modules.frp.entity.Shell;
+import com.sun.xml.bind.v2.TODO;
 import org.apache.commons.lang.StringUtils;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.apache.tomcat.util.http.fileupload.FileUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -26,6 +36,9 @@ import com.jeesite.modules.frp.entity.FrpServer;
 import com.jeesite.modules.frp.service.FrpServerService;
 
 import java.io.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -39,6 +52,10 @@ public class FrpServerController extends BaseController {
 
 	@Autowired
 	private FrpServerService frpServerService;
+	@Autowired
+	private ShellUtil shellUtil;
+
+	protected Logger logger = LoggerFactory.getLogger(getClass());
 	
 	/**
 	 * 获取数据
@@ -86,17 +103,11 @@ public class FrpServerController extends BaseController {
 	@PostMapping(value = "save")
 	@ResponseBody
 	public String save(@Validated FrpServer frpServer) {
-		if (StringUtils.isBlank(frpServer.getDashboardPort())) {
-			frpServer.setDashboardPort("7500");
-		}
-		if (StringUtils.isBlank(frpServer.getDashboardUser())) {
-			frpServer.setDashboardUser("admin");
-		}
-		if (StringUtils.isBlank(frpServer.getDashboardPwd())) {
-			frpServer.setDashboardPwd("admin");
-		}
 		if (StringUtils.isBlank(frpServer.getWebPort())) {
 			frpServer.setWebPort("8080");
+		}
+		if (StringUtils.isBlank(frpServer.getUserName())) {
+			frpServer.setUserName("root");
 		}
 		frpServerService.save(frpServer);
 		return renderResult(Global.TRUE, text("保存frp_server成功！"));
@@ -113,68 +124,34 @@ public class FrpServerController extends BaseController {
 		return renderResult(Global.TRUE, text("删除frp_server成功！"));
 	}
 
-	@RequestMapping("/exportServer/{id}")
-    @ResponseBody
-    public void exportServer(@PathVariable String id, HttpServletResponse response) throws IOException {
 
+	/**
+	 * 远程安装FRP
+	 */
+	@RequiresPermissions("frp:frpServer:edit")
+	@RequestMapping(value = "fastFrp/{id}/{passwd}")
+	@ResponseBody
+	public String fastFrp(@PathVariable("id") String id, @PathVariable("passwd") String passwd) {
 		FrpServer frpServer = frpServerService.get(id);
+		if (frpServer != null) {
+			Shell shell = new Shell(frpServer.getServerIp(), frpServer.getUserName(), passwd);
+			try {
+				shellUtil.execute(shell,"if [ ! -f \"fastFrp.sh\" ];then wget https://raw.githubusercontent.com/Zo3i/OCS/master/frp/fastFrp.sh; fi");
+				shellUtil.execute(shell,"chmod 755 fastFrp.sh");
+				shellUtil.execute(shell,"bash fastFrp.sh " + frpServer.getWebPort() + " " + frpServer.getSubdomainHost());
+			} catch (RuntimeException e) {
+				logger.info(e.toString().split(":")[1]);
+				return e.toString().split(":")[1];
+			}
 
-        // 源文件目录
-		String zipName = UUID.randomUUID().toString();
-		String dir = System.getProperty("java.io.tmpdir") + File.separator + zipName + File.separator;
-		String dir_client = System.getProperty("java.io.tmpdir") + File.separator + zipName + File.separator + "server";
-		File srcDir = new File(dir_client);
+			ArrayList<String> stdout = shell.getStandardOutput();
 
-		//拷贝到临时文件夹
-        JarFileUtil.BatCopyFileFromJar("static/frp/server", dir_client);
-
-         //读取frpc.ini
-        File temp_file = new File(dir_client + File.separator +"frps.ini");
-        StringBuffer res = new StringBuffer();
-        String line = null;
-		BufferedReader reader = new BufferedReader(new FileReader(temp_file));
-        while ((line = reader.readLine()) != null) {
-		    res.append(line + "\n");
+			for (String str : stdout) {
+				logger.info(str);
+			}
 		}
-        reader.close();
-        BufferedWriter writer = new BufferedWriter(new FileWriter(temp_file));
-        String temp_string = res.toString();
-        //替换模板
-		String webPort = frpServer.getWebPort();
-		String dashboardPort = frpServer.getDashboardPort();		// FRP面板端口
-		String dashboardUser = frpServer.getDashboardUser();		// FRP面板账户
-		String dashboardPwd = frpServer.getDashboardPwd();		// FRP面板密码
-		String subdomainHost = frpServer.getSubdomainHost();		// 域名
+		return "安装成功！";
+	}
 
-        temp_string = temp_string.replaceAll("frp_vhost_http_port", webPort);
-        temp_string = temp_string.replaceAll("frp_dashboard_port", dashboardPort);
-        temp_string = temp_string.replaceAll("frp_dashboard_user", dashboardUser);
-        temp_string = temp_string.replaceAll("frp_dashboard_pwd", dashboardPwd);
-		temp_string = temp_string.replaceAll("frp_subdomain_host", subdomainHost);
 
-        writer.write(temp_string);
-		writer.flush();
-		writer.close();
-
-        String zipFilePath = System.getProperty("java.io.tmpdir") + File.separator + zipName + "zip";
-        ZipUtils.zip(dir, zipFilePath);
-        File zipFile = new File(zipFilePath);
-	        System.out.println("succeed");
-           // 以流的形式下载文件。
-           BufferedInputStream fis = new BufferedInputStream(new FileInputStream(zipFile.getPath()));
-           byte[] buffer = new byte[fis.available()];
-           fis.read(buffer);
-           fis.close();
-           response.reset();
-           OutputStream toClient = new BufferedOutputStream(response.getOutputStream());
-           response.setContentType("application/octet-stream");
-           response.setHeader("Content-Disposition", "attachment;filename=" + "server.zip");
-
-           toClient.write(buffer);
-           toClient.flush();
-           toClient.close();
-           FileUtils.deleteDirectory(srcDir);
-           zipFile.delete();
-    }
-	
 }
